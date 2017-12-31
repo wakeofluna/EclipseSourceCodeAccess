@@ -1,14 +1,14 @@
 {
-	"FileVersion" : 1,
+	"FileVersion" : 3,
 	"FriendlyName" : "Eclipse Source Code Access",
 	"Version" : 1,
 	"VersionName" : "1.0",
 	"CreatedBy" : "Martin Gerhardy",
 	"CreatedByURL" : "https://github.com/mgerhardy/EclipseSourceCodeAccess.git",
-	"EngineVersion" : "4.9.0",
 	"Description" : "Allows access to source code with Eclipse CDT.",
 	"Category": "Programming",
 	"EnabledByDefault" : true,
+	"IsBetaVersion" : true,
 
 	"Modules" :
 	[
@@ -16,7 +16,7 @@
 			"Name" : "EclipseSourceCodeAccess",
 			"Type" : "Developer",
 			"WhitelistPlatforms" : [ "Linux", "Win32", "Win64", "Mac" ],
-			"LoadingPhase" : "PreDefault"
+			"LoadingPhase" : "Default"
 		}
 	]
 }

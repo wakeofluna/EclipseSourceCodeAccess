@@ -1,11 +1,9 @@
-#include "EclipseSourceCodeAccessPrivatePCH.h"
 #include "EclipseSourceCodeAccessor.h"
-#include "ModuleManager.h"
+#include "HAL/PlatformProcess.h"
+#include "Misc/Paths.h"
 #include "DesktopPlatformModule.h"
-
-#if WITH_EDITOR
-#include "Developer/HotReload/Public/IHotReload.h"
-#endif
+#include "Misc/UProjectInfo.h"
+#include "Misc/App.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogEclipseAccessor, Log, All);
 
@@ -15,7 +13,8 @@ DEFINE_LOG_CATEGORY_STATIC(LogEclipseAccessor, Log, All);
 
 bool FEclipseSourceCodeAccessor::CanAccessSourceCode() const
 {
-	return true;
+	FString Path;
+	return CanRunEclipse(Path);
 }
 
 FName FEclipseSourceCodeAccessor::GetFName() const
@@ -35,53 +34,39 @@ FText FEclipseSourceCodeAccessor::GetDescriptionText() const
 
 bool FEclipseSourceCodeAccessor::OpenSolution()
 {
-	FString Filename = FPaths::GetBaseFilename(GetSolutionPath()) + ".cproject";
-	FString Directory = FPaths::GetPath(GetSolutionPath());
-	FString Solution = "\"" + Directory + "/" + Filename + "\"";
-	FString EclipsePath;
-	if (!CanRunEclipse(EclipsePath))
-	{
-		return false;
-	}
+	FString SolutionPath = GetSolutionPath();
+	FString Solution = "-data \"" + SolutionPath + "\"";
+	return RunEclipse(Solution, true);
+}
 
-	UE_LOG(LogEclipseAccessor, Warning, TEXT("FEclipseSourceCodeAccessor::OpenSolution: %s %s"), *EclipsePath, *Solution);
+bool FEclipseSourceCodeAccessor::OpenSolutionAtPath(const FString& InSolutionPath)
+{
+	FString SolutionPath = FPaths::GetPath(FPaths::GetPath(InSolutionPath));
+	FString Solution = "-data \"" + SolutionPath + "\"";
+	return RunEclipse(Solution, true);
+}
 
-	FProcHandle Proc = FPlatformProcess::CreateProc(*EclipsePath, *Solution, true, false, false, nullptr, 0, nullptr, nullptr);
-	if (Proc.IsValid())
-	{
-		FPlatformProcess::CloseProc(Proc);
-		return true;
-	}
-	return false;
+bool FEclipseSourceCodeAccessor::DoesSolutionExist() const
+{
+	FString SolutionPath = GetSolutionPath();
+	FString MetadataPath = FPaths::Combine(SolutionPath, TEXT(".metadata"));
+	return FPaths::DirectoryExists(MetadataPath);
 }
 
 bool FEclipseSourceCodeAccessor::OpenFileAtLine(const FString& FullPath, int32 LineNumber, int32 ColumnNumber)
 {
-	TArray<FString> Files;
-	Files.Emplace(FString::Printf(TEXT("%s:%i "), *FullPath, LineNumber));
-	return OpenSourceFiles(Files);
+	return false;
 }
 
 bool FEclipseSourceCodeAccessor::OpenSourceFiles(const TArray<FString>& AbsoluteSourcePaths)
 {
-	FString EclipsePath;
-	if (!CanRunEclipse(EclipsePath))
-	{
-		return false;
-	}
-	FString Args = FString(TEXT("--launcher.timeout 60 --launcher.openFile "));
+	FString Args = FString(TEXT("--launcher.timeout 60 --launcher.openFile"));
 	for (const FString& SourcePath : AbsoluteSourcePaths)
 	{
-		const FString NewSourcePath = FString::Printf(TEXT("\"%s\" "), *SourcePath);
+		const FString NewSourcePath = FString::Printf(TEXT(" \"%s\""), *SourcePath);
 		Args.Append(NewSourcePath);
 	}
-	FProcHandle Proc = FPlatformProcess::CreateProc(*EclipsePath, *Args, true, false, false, nullptr, 0, nullptr, nullptr);
-	if (Proc.IsValid())
-	{
-		FPlatformProcess::CloseProc(Proc);
-		return true;
-	}
-	return false;
+	return RunEclipse(Args);
 }
 
 bool FEclipseSourceCodeAccessor::AddSourceFiles(const TArray<FString>& AbsoluteSourcePaths, const TArray<FString>& AvailableModules)
@@ -117,14 +102,66 @@ bool FEclipseSourceCodeAccessor::CanRunEclipse(FString& OutPath) const
 	return true;
 }
 
+bool FEclipseSourceCodeAccessor::RunEclipse(const FString& InArgs, bool InReplaceInstance)
+{
+	FString EclipsePath;
+	if (!CanRunEclipse(EclipsePath))
+	{
+		return false;
+	}
+
+	if (!InReplaceInstance && FPlatformProcess::IsProcRunning(RunningInstance))
+	{
+		FProcHandle Proc = FPlatformProcess::CreateProc(*EclipsePath, *InArgs, true, false, false, nullptr, 0, nullptr, nullptr);
+		if (Proc.IsValid())
+		{
+			FPlatformProcess::WaitForProc(Proc);
+			FPlatformProcess::CloseProc(Proc);
+			return true;
+		}
+		return false;
+	}
+
+	FString Args;
+	if (InReplaceInstance)
+	{
+		if (FPlatformProcess::IsProcRunning(RunningInstance))
+		{
+			UE_LOG(LogEclipseAccessor, Warning, TEXT("FEclipseSourceCodeAccessor: Killing previous running instance"));
+			FPlatformProcess::TerminateProc(RunningInstance);
+		}
+		Args = InArgs;
+	}
+	else
+	{
+		FString Workspace = GetSolutionPath();
+		Args = FString(TEXT("-data \"") + Workspace + TEXT("\" ") + InArgs);
+	}
+
+	if (RunningInstance.IsValid())
+	{
+		FPlatformProcess::WaitForProc(RunningInstance);
+		FPlatformProcess::CloseProc(RunningInstance);
+	}
+
+	RunningInstance = FPlatformProcess::CreateProc(*EclipsePath, *Args, false, false, false, nullptr, 0, nullptr, nullptr);
+	return RunningInstance.IsValid();
+}
+
 FString FEclipseSourceCodeAccessor::GetSolutionPath() const
 {
 	if (IsInGameThread())
 	{
-		FString SolutionPath;
-		if (FDesktopPlatformModule::Get()->GetSolutionPath(SolutionPath))
+		FString RootDirPath = FPaths::RootDir();
+		FString ProjectDirPath = FPaths::ProjectDir();
+
+		if (!FUProjectDictionary(RootDirPath).IsForeignProject(ProjectDirPath))
 		{
-			CachedSolutionPath = FPaths::ConvertRelativePathToFull(SolutionPath);
+			CachedSolutionPath = FPaths::ConvertRelativePathToFull(RootDirPath);
+		}
+		else
+		{
+			CachedSolutionPath = FPaths::ConvertRelativePathToFull(FPaths::GetPath(FPaths::GetPath(ProjectDirPath)));
 		}
 	}
 	return CachedSolutionPath;

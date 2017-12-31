@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CoreMinimal.h"
 #include "ISourceCodeAccessor.h"
 
 class FEclipseSourceCodeAccessor : public ISourceCodeAccessor
@@ -13,7 +14,19 @@ private:
 
 	/** Tests if eclipse is present and returns path to it */
 	bool CanRunEclipse(FString& OutPath) const;
+
+	/** Tests if eclipse is present and calls the launcher with the specified arguments */
+	bool RunEclipse(const FString& InArgs, bool InReplaceInstance = false);
+
+	/** Remember if we already started, check that we're still running */
+	FProcHandle RunningInstance;
+
 public:
+	/**
+	 * Call if we've likely modified the availability of the source code accessor.
+	 */
+	virtual void RefreshAvailability() override {}
+
 	/**
 	 * Can we access source code.
 	 */
@@ -35,9 +48,19 @@ public:
 	virtual FText GetDescriptionText() const override;
 
 	/**
-	 * Open the CodeLite Workspace for editing.
+	 * Open the Eclipse Workspace for editing.
 	 */
 	virtual bool OpenSolution() override;
+
+	/**
+	 * Open the Eclipse Workspace for editing.
+	 */
+	virtual bool OpenSolutionAtPath(const FString& InSolutionPath) override;
+
+	/**
+	 * Check the Eclipse Workspace for editing.
+	 */
+	virtual bool DoesSolutionExist() const override;
 
 	/**
 	 * Open a file at a specific line and optional column.
